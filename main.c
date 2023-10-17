@@ -1,6 +1,5 @@
 #include <stdio.h>   
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_mixer.h>
 #include <stdlib.h>
@@ -21,7 +20,7 @@ int fullscreen = 0;
 float last_frame = 0;
 float deltaTime = 0;
 int running = 0;
-const int maxFPS = 0;
+const int maxFPS = 120;
 int fps = 0;
 int main_menu = 1;
 int paused = 0;
@@ -63,14 +62,13 @@ int enemy_present = 0;
 int enemy_baseEnragement = 0;
 SDL_Renderer* renderer = NULL;
 SDL_Window* window = NULL;
-TTF_Font* font = NULL;
-TTF_Font* font_outline = NULL;
 // INIT SURFACE AND TEXTURE ATLASES
 SDL_Surface * TEXT_Surface = NULL;
 SDL_Texture * TEXT_Texture = NULL;
 SDL_Surface * POWERUPS_Surface = NULL;
 SDL_Texture * POWERUPS_Texture = NULL;
-
+SDL_Surface * TEXTURES_Surface = NULL;
+SDL_Texture * TEXTURES_Texture = NULL;
 // COLORS 
 int colorWHITE[3] = { 255, 255, 255 };
 int colorBLACK[3] = { 0, 0, 0 };
@@ -100,6 +98,7 @@ Mix_Chunk* SOUND_enemyouch = NULL;
 Mix_Chunk* SOUND_death = NULL; 
 Mix_Chunk* SOUND_step = NULL; 
 Mix_Chunk* SOUND_reload = NULL; 
+Mix_Chunk* SOUND_fiend = NULL; 
 // STORE KEY BOOLEANS (ON PRESS)
 struct keys {
   // KEYBOARD
@@ -169,6 +168,19 @@ struct rectangle {
     float luck;
     int dead;
     float stepTime;
+    int score;
+    int scoreShow;
+    float scoreShowF;
+    float scoreShownTime;
+    float scoreOpacity;
+    int fiend;
+    int fiendPresent;
+    float fiendTimer;
+    float fiendTimerMax;
+    int combo;
+    float comboTimer;
+    float comboOpacity;
+    int comboExpired;
 } rect;
 
 struct bullet {
@@ -206,6 +218,10 @@ struct enemy{
   float enragement; 
   float fireRate;
   float fireRateTime;
+  int path[50];
+  int pathLength;
+  int pathindex;
+  float pathTimer;
 };
 
 struct particle{
@@ -222,18 +238,21 @@ struct particle{
 };
 struct obstacle{
   int reserve;
+  int type;
   float x;
   float y;
   float width;
   float height;
 };
-struct bush{
+struct objectBackground{
   int reserve;
+  int indexAssociate;
   float x;
   float y;
   float width;
   float height;
   float angle;
+  float opacity;
 };
 struct item{
   int reserve;
@@ -292,19 +311,41 @@ struct upgradeTile{
   int alertMessageSize;
   SDL_Rect RectSrc;
 };
+struct fiend{
+  int reserve;
+  float x;
+  float y;
+  float veloX;
+  float veloY;
+  float angle;
+  int target;
+  int dmg;
+
+};
+struct scoreText{
+  int reserve;
+  float x;
+  float y;
+  int value;
+  float opacity;
+};
+
 struct particle particles[100];
 struct bullet bullets[50];
-struct enemy enemies[1];
-struct obstacle obstacles[10];
-struct bush bushes[100];
+struct enemy enemies[100];
+struct obstacle obstacles[30];
+struct objectBackground bushes[100];
+struct objectBackground trees[20];
 struct item items[300];
 struct alert alerts[4];
 struct credit credits[150];
-struct upgradeTile upgrades[5];
+struct upgradeTile upgrades[6];
+struct scoreText scoreTexts[15];
+struct fiend fiends[40];
 
 int cols = 50;
 int rows = 50;
-float grid[1481][6];
+int grid[2000][8];
 
 
 // MATH 
@@ -331,7 +372,108 @@ int intersectingLinesCheck(float x1, float y1,float x2,float y2,float x3,float y
    }
   return 0;
 }
+void pathFinding(struct enemy ENEMY,int index){ 
+    int wall = 0;
+    int wall2 = 0;
+    int startIndex = (int)(ENEMY.x/rows) + (int)(ENEMY.y/cols)*(worldBorder.x/cols);
+    int targetIndex = (int)rect.x/rows + (int)(rect.y/cols)*(worldBorder.x/cols);
+    grid[startIndex][4] = SDL_abs(grid[targetIndex][0]-grid[startIndex][0])+ SDL_abs(grid[targetIndex][1]-grid[startIndex][1]);
+    grid[targetIndex][4] = 0;
+    if(grid[targetIndex][2]){
+      grid[targetIndex][2] = 0;
+      wall = 1;
+    }
+    if(grid[startIndex][2]){
+      grid[startIndex][2] = 0;
+      wall2 = 1;
+    }
+    int openSet[120];
+    int openSetIndex = 0;  
+    int current;
+    int currentIndex;
+    openSet[openSetIndex] = startIndex;
+    openSetIndex++;
+    int best;
+    
+    for(int i  = 0;i<sizeof(grid)/sizeof(grid[0]);i++){
+      grid[i][7] = 0;
+    }
+    for(int i = 0;i<50;i++){
+      
+      if(openSetIndex<0){
+      enemies[index].pathLength = -99;
+      break;
+      }
+      best = 0;
+      for(int j = 0;j<openSetIndex;j++){
+        if(!grid[openSet[j]][7]){
+          best = j;
+          break;
+        }
+      }
+      for(int j = 0;j<openSetIndex;j++){ 
+        if(openSet[j] == -1){
+          continue;
+        } 
+        if((int)grid[openSet[j]][4]+grid[openSet[j]][5] <= (int)grid[openSet[best]][4]+grid[openSet[best]][5] && !grid[openSet[j]][7]){
+          best = j;
+        }
+      }
+      current = openSet[best];
+      currentIndex = best;
+      if(current == targetIndex){
+        enemies[index].pathLength = i-2;
+        for(int k = 0;k<i-1;k++){
+          enemies[index].path[k] = current;
+          current = grid[current][6];
+        }
+        break;
+      }   
+      if(i>=49){
+        enemies[index].pathLength = -99;
+        break;
+      } 
 
+      grid[current][7] = 1;
+      openSetIndex--;  
+
+      // neighbors
+      if((int)(worldBorder.x/cols) - current % (int)(worldBorder.x/cols) > 1 && grid[current+1][2] == 0 && grid[current+1][7] == 0){
+        grid[current+1][5] = grid[current][5] + 1;
+        grid[current+1][4] = SDL_abs(grid[targetIndex][0]-grid[current+1][0])+ SDL_abs(grid[targetIndex][1]-grid[current+1][1]);
+        grid[current+1][6] = current;
+        openSet[openSetIndex] = current+1;
+        openSetIndex++;
+      }
+      if(current % (int)(worldBorder.x/cols) > 0 && grid[current-1][2] == 0 && grid[current-1][7] == 0){
+        grid[current-1][5] = grid[current][5] + 1;
+        grid[current-1][4] = SDL_abs(grid[targetIndex][0]-grid[current-1][0])+ SDL_abs(grid[targetIndex][1]-grid[current-1][1]);
+        grid[current-1][6] = current;
+        openSet[openSetIndex] = current-1;
+        openSetIndex++;
+      }
+      if(current < 2000-(int)(worldBorder.x/cols) && grid[current+(int)(worldBorder.x/cols)][2] == 0 && grid[current+(int)(worldBorder.x/cols)][7] == 0){
+        grid[current+(int)(worldBorder.x/cols)][5] = grid[current][5] + 1;
+        grid[current+(int)(worldBorder.x/cols)][4] = SDL_abs(grid[targetIndex][0]-grid[current+(int)(worldBorder.x/cols)][0])+ SDL_abs(grid[targetIndex][1]-grid[current+(int)(worldBorder.x/cols)][1]);
+        grid[current+(int)(worldBorder.x/cols)][6] = current;
+        openSet[openSetIndex] = current+(int)(worldBorder.x/cols);
+        openSetIndex++;
+      }
+      if(current > (int)(worldBorder.x/cols) && grid[current-(int)(worldBorder.x/cols)][2] == 0 && grid[current-(int)(worldBorder.x/cols)][7] == 0){
+        grid[current-(int)(worldBorder.x/cols)][5] = grid[current][5] + 1;
+        grid[current-(int)(worldBorder.x/cols)][4] = SDL_abs(grid[targetIndex][0]-grid[current-(int)(worldBorder.x/cols)][0])+ SDL_abs(grid[targetIndex][1]-grid[current-(int)(worldBorder.x/cols)][1]);
+        grid[current-(int)(worldBorder.x/cols)][6] = current;
+        openSet[openSetIndex] = current-(int)(worldBorder.x/cols);
+        openSetIndex++;
+      }
+    }
+    if(wall){
+      grid[targetIndex][2] = 1;
+    }
+    if(wall2){
+      grid[startIndex][2] = 1;
+    }
+}
 int intersectingLines(int x1, int y1,int x2,int y2,int x3,int y3,int x4,int y4){
   // 1 and 2 line and 3 and 4 line
    float uA1 = ((x4-x3)*(y1-y3) - (y4-y3)*(x1-x3));
@@ -423,18 +565,20 @@ void fillPOLYGON(int* point1,int* point2,int* point3,int* point4 ,int y,int* col
     }
 }
 int initGame(void){
-  
+   
    if(SDL_Init(SDL_INIT_VIDEO) != 0){
     printf("SDL unsupported !");
     return 0;
    }
+   SDL_DisplayMode dm;
+   SDL_GetDesktopDisplayMode(0, &dm);
+   printf("%d %d",(int)dm.w,(int)dm.h);
    window = SDL_CreateWindow("Game",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,
    windowWidth,windowHeight,0
-
-
-
  );
+   
 
+   
    if(!window){
     printf("Window Closed");
     return 0;
@@ -444,15 +588,17 @@ int initGame(void){
     printf("Renderer Closed");
     return 0;
    }
-   TTF_Init();
    IMG_Init(IMG_INIT_PNG);
    // INIT PNG FONT ATLAS
    TEXT_Surface = IMG_Load("assets/font-atlas.png");
    POWERUPS_Surface = IMG_Load("assets/powerups.png");
    TEXT_Texture = SDL_CreateTextureFromSurface(renderer,TEXT_Surface);
    POWERUPS_Texture = SDL_CreateTextureFromSurface(renderer,POWERUPS_Surface);
+   TEXTURES_Surface = IMG_Load("assets/textures.png");
+   TEXTURES_Texture = SDL_CreateTextureFromSurface(renderer,TEXTURES_Surface);
    SDL_FreeSurface(TEXT_Surface);
    SDL_FreeSurface(POWERUPS_Surface);
+   SDL_FreeSurface(TEXTURES_Surface);
    // INIT SOUNDS 
    if( Mix_OpenAudio( 44100, MIX_DEFAULT_FORMAT, 8, 128) == -1 )
     {
@@ -475,6 +621,7 @@ int initGame(void){
    SOUND_death = Mix_LoadWAV("sound/death.wav");
    SOUND_reload = Mix_LoadWAV("sound/reload.wav");
    SOUND_step = Mix_LoadWAV("sound/step.wav");
+   SOUND_fiend = Mix_LoadWAV("sound/fiend.wav");
    // RANDOM NUMBER GENERATION
    
    srand(time(NULL));
@@ -487,11 +634,8 @@ int initGame(void){
 void kill(void){
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
-    TTF_CloseFont(font);
-    TTF_CloseFont(font_outline);
     Mix_FreeChunk(SOUND_shoot);
     Mix_CloseAudio();
-    TTF_Quit();
     IMG_Quit();
     SDL_Quit();
 }
@@ -544,6 +688,7 @@ void input(void){
           break;
         }    
         case SDLK_r:{
+          
           key.r = 1;
           break;
         }
@@ -809,9 +954,11 @@ void alertCall(int stringCount,char* Text,int* color){
   }
 }
 void draw(void){
-  
- SDL_SetRenderDrawColor(renderer,27,148,6,255); // 27, 148, 6
+ SDL_SetRenderDrawColor(renderer,3, 161, 8,255); 
  SDL_RenderClear(renderer);
+ 
+ 
+ 
   // SOME BACKGROUND 
  SDL_SetRenderDrawColor(renderer,0,70,0,255); 
  for(int i = 0;i<sizeof(bushes)/sizeof(bushes[0]);i++){
@@ -821,9 +968,10 @@ void draw(void){
    (int)(bushes[i].y-camera.y),
    (int)(bushes[i].width),
    (int)(bushes[i].height)
-   };
- SDL_RenderDrawRect(renderer,&BushThing);  
- SDL_RenderFillRect(renderer,&BushThing);
+   };  
+ SDL_RenderCopy(renderer,TEXTURES_Texture,&(SDL_Rect){
+  0,200,45,30
+ },&BushThing);
   }
  }
 
@@ -936,9 +1084,26 @@ void draw(void){
    free(EXpoint4);
   }
    }
+   // DRAW FIENDS
+   for(int i = 0;i<sizeof(fiends)/sizeof(fiends[0]);i++){
+    if(fiends[i].reserve){
+      int *point1;
+      int *point2;
+      int *point3;
+      point1 = (int*)rotatePoint(fiends[i].angle+PI/2,fiends[i].x+5,fiends[i].y,fiends[i].x+5,fiends[i].y+5);
+      point2 = (int*)rotatePoint(fiends[i].angle+PI/2,fiends[i].x,fiends[i].y+10,fiends[i].x+5,fiends[i].y+5);
+      point3 = (int*)rotatePoint(fiends[i].angle+PI/2,fiends[i].x+10,fiends[i].y+10,fiends[i].x+5,fiends[i].y+5);
+      int colorFiend[4] = {242,200,145+(int)rect.shield*1.1f,255};
+      fillPOLYGON(point1,point1,point2,point3,fiends[i].y-camera.y,colorFiend,1);
+      free(point1);
+      free(point2);
+      free(point3);
+    }
+   }
+
    // DRAW BULLETS IF AVAILABLE
    for(int i = 0;i<sizeof(bullets)/sizeof(bullets[0]);i++){
-     if(bullets[i].reserve && (bullets[i].x+ 3.0f > camera.x && bullets[i].x<windowWidth+camera.x && bullets[i].y+ 3.0f > camera.y && bullets[i].y<windowHeight+camera.y)){
+     if(bullets[i].reserve && (bullets[i].x+3.0f > camera.x && bullets[i].x<windowWidth+camera.x && bullets[i].y+ 3.0f > camera.y && bullets[i].y<windowHeight+camera.y)){
        SDL_Rect bulletRect = {
        (int)(bullets[i].x-camera.x-1),
        (int)(bullets[i].y-camera.y-1),
@@ -953,6 +1118,15 @@ void draw(void){
    // DRAW ENEMIES
    for(int i = 0;i<sizeof(enemies)/sizeof(enemies[0]);i++){
      if(enemies[i].reserve && (enemies[i].x+ enemies[i].width > camera.x && enemies[i].x<windowWidth+camera.x && enemies[i].y+ enemies[i].height > camera.y && enemies[i].y<windowHeight+camera.y)){
+        //SDL_SetRenderDrawColor(renderer,0,0,0,255);
+        //for(int j = 0;j<enemies[i].pathLength-1;j++){
+        //  if(enemies[i].pathLength>0){
+        //     SDL_RenderDrawLine(renderer,grid[enemies[i].path[j]][0]*50+25-camera.x,grid[enemies[i].path[j]][1]*50+25-camera.y,grid[enemies[i].path[j+1]][0]*50-camera.x+25
+        //  ,grid[enemies[i].path[j+1]][1]*50+25-camera.y);
+        //  }
+        // 
+        //}
+        
         int *EX_Epoint1;
         int *EX_Epoint2;
         int *EX_Epoint3;
@@ -1030,7 +1204,7 @@ void draw(void){
        }
      }
    }
- 
+
  // DRAW OBSTACLES
  // NOTE : OBSTACLES ARE NEVER ROTATED THUS NO NEED TO USE rotatePoint() 
  for(int i = 0;i<sizeof(obstacles)/sizeof(obstacles[0]);i++){
@@ -1049,9 +1223,47 @@ void draw(void){
      };
      SDL_SetRenderDrawColor(renderer,120,20,0,255);
      SDL_RenderFillRect(renderer,&obstacleRect);
-     SDL_SetRenderDrawColor(renderer,150,120,0,255);
-     SDL_RenderFillRect(renderer,&EXobstacleRect);
+     for(int j = 0;j<=EXobstacleRect.h/200;j++){
+      for(int k = 0;k<=EXobstacleRect.w/200;k++){
+        if(obstacles[i].type == 0){
+          SDL_RenderCopy(renderer,TEXTURES_Texture,&(SDL_Rect){
+        0,0,SDL_min(EXobstacleRect.w-k*200,200),SDL_min(EXobstacleRect.h-j*200,200)
+      },&(SDL_Rect){
+        EXobstacleRect.x+k*200,
+        EXobstacleRect.y+j*200,
+        SDL_min(EXobstacleRect.w-k*200,200),SDL_min(EXobstacleRect.h-j*200,200)
+      });
+      
+        }
+        else if (obstacles[i].type == 1){
+          SDL_RenderCopy(renderer,TEXTURES_Texture,&(SDL_Rect){
+        0,325,25,25},&(SDL_Rect){
+        EXobstacleRect.x+k*200,
+        EXobstacleRect.y+j*200,
+        SDL_min(EXobstacleRect.w-k*200,200),SDL_min(EXobstacleRect.h-j*200,200)
+      });
+        }
+        
+      }
+      
+     }
+     
    }
+ }
+ // DRAW TREES
+ for(int i = 0 ;i<sizeof(trees)/sizeof(trees[0]);i++){
+  if(trees[i].reserve){
+    SDL_SetTextureAlphaMod( TEXTURES_Texture, trees[i].opacity);
+    SDL_RenderCopy(renderer,TEXTURES_Texture,&(SDL_Rect){
+      0,230,95,95
+    },&(SDL_Rect){
+      trees[i].x-camera.x,
+      trees[i].y-camera.y,
+      trees[i].width,
+      trees[i].height
+    });
+    SDL_SetTextureAlphaMod( TEXTURES_Texture, 255);
+  }
  }
     // HUD RENDERING
       // [HEALTH]
@@ -1106,7 +1318,12 @@ void draw(void){
      SDL_SetRenderDrawColor(renderer,0,0,0,HUDOpacity);
      SDL_RenderDrawRect(renderer,&BulletStroke);
 
-
+ // SCORE POPUP DRAW
+ for (int i = 0;i<sizeof(scoreTexts)/sizeof(scoreTexts[0]);i++){
+  if(scoreTexts[i].reserve){
+    renderNum(SDL_log(scoreTexts[i].value+1),scoreTexts[i].value,scoreTexts[i].x-camera.x,scoreTexts[i].y-camera.y,15,10,scoreTexts[i].opacity,colorWHITE);
+  }
+ }
  ///////////////////////////////////////////////////////////
     // TEXT RENDERING 
   renderNum(2,rect.health,30,windowHeight-40,40,20,HUDOpacity,colorWHITE);
@@ -1130,15 +1347,16 @@ void draw(void){
    }
   }
   int credits_digits;
-      if(rect.credit != 0){
-        credits_digits = SDL_floor(SDL_log10(rect.credit)+1);
-      }
-      else {
-        credits_digits = 1;
-      }
+  if(rect.credit != 0){
+    credits_digits = SDL_floor(SDL_log10(rect.credit)+1);
+  }
+  else {
+    credits_digits = 1;
+  }
   char TEXT_credit[8+credits_digits];
   sprintf(TEXT_credit,"Credits %d",(int)rect.credit);
   renderText(8+credits_digits,TEXT_credit,windowWidth-(8+credits_digits)*10,25*ShowFPS+5,(8+credits_digits)*10,15,SDL_min(rect.creditOpacity,HUDOpacity),colorYELLOW);
+  
   if(rect.creditOpacity > 0.01f && rect.credittimeShown < 5000.0f ){
       rect.credittimeShown += 1000*deltaTime;
   }
@@ -1148,6 +1366,50 @@ void draw(void){
       rect.creditOpacity = 0;
     }
   }
+  int score_digits;
+  if(rect.scoreShow != 0){
+    score_digits = SDL_floor(SDL_log10(rect.scoreShow)+1);
+  }
+  else {
+    score_digits = 1;
+  }
+  char TEXT_score[6+score_digits];
+  sprintf(TEXT_score,"Score %d",(int)rect.scoreShow);
+  renderText(6+score_digits,TEXT_score,windowWidth-(6+score_digits)*10,25*ShowFPS+30,(6+score_digits)*10,15,SDL_min(rect.scoreOpacity,HUDOpacity),colorWHITE);
+  if(rect.scoreOpacity > 0.01f && rect.scoreShownTime < 5000.0f ){
+      rect.scoreShownTime += 1000*deltaTime;
+  }
+  if(rect.scoreShownTime > 5000.0f && rect.scoreOpacity > 0){
+    rect.scoreOpacity -= 200*deltaTime;
+    if(rect.scoreOpacity < 0){
+      rect.scoreOpacity = 0;
+    }
+  }
+  int combo_digits;
+  if(rect.combo != 0){
+    combo_digits = SDL_floor(SDL_log10(rect.combo)+1);
+  }
+  else {
+    combo_digits = 1;
+  }
+  char TEXT_combo[8+combo_digits];
+  sprintf(TEXT_combo,"Combo x%d",(int)rect.combo);
+  int colorCombo[3] = {255-10*rect.combo*(10*rect.combo<255)-255*(rect.combo*10>=255),255,255};
+  renderText(8+combo_digits,TEXT_combo,windowWidth-(7+combo_digits)*(10+SDL_log(rect.combo)),25*ShowFPS+80,(8+combo_digits)*(10+SDL_log(rect.combo)),15+SDL_log(rect.combo),SDL_min(rect.comboOpacity,HUDOpacity),colorCombo);
+  if(!rect.comboExpired){
+    SDL_Rect RectCombo = {
+      windowWidth-(7+combo_digits)*(10+SDL_log(rect.combo))-2,
+      25*ShowFPS+100+SDL_log(rect.combo),
+      (5-rect.comboTimer)/5*(7+combo_digits)*(10+SDL_log(rect.combo)),
+      5
+  };
+  SDL_SetRenderDrawColor(renderer,colorCombo[0],colorCombo[1],colorCombo[2],255);
+  SDL_RenderFillRect(renderer,&RectCombo);
+  RectCombo.w = (7+combo_digits)*(10+SDL_log(rect.combo));
+  SDL_SetRenderDrawColor(renderer,0,0,0,255);
+  SDL_RenderDrawRect(renderer,&RectCombo);
+  }
+  
   char TEXT_seconds[2];
   char TEXT_minutes[2];
   if(gameClock_Seconds%60 < 10){
@@ -1279,14 +1541,6 @@ void update(){
       rect.stepTime = 0;
     }
   }
-  // CAMERA FOLLOWAGE
-  if(rect.x+rect.width/2>=windowWidth/2 && rect.x+rect.width/2<=-windowWidth/2+worldBorder.x){
-    camera.x = rect.x+rect.width/2-windowWidth/2;  
-  }
-  if(rect.y+rect.height/2>windowHeight/2 && rect.y+rect.height/2<=-windowHeight/2+worldBorder.y){
-    camera.y = rect.y+rect.height/2-windowHeight/2; 
-  }
-  
   // BOUNDINGS
   if (rect.x < 0){
     rect.x = 0;
@@ -1396,7 +1650,121 @@ void update(){
   else {
     rect.shieldTime = 0;
   }
-  
+  // FIENDS
+  rect.fiendTimer += 1*deltaTime;
+  for(int i = 0;i<sizeof(fiends)/sizeof(fiends[0]);i++){
+    if(fiends[i].reserve){
+      if(fiends[i].x-enemies[fiends[i].target].x != 0){
+        fiends[i].angle = SDL_atan((fiends[i].y-enemies[fiends[i].target].y)/(fiends[i].x-enemies[fiends[i].target].x));
+        }
+       if(fiends[i].x > enemies[fiends[i].target].x){
+         fiends[i].angle += PI;
+       }  
+      fiends[i].veloX = 200*SDL_cos(fiends[i].angle);
+      fiends[i].veloY = 200*SDL_sin(fiends[i].angle);
+      fiends[i].x += fiends[i].veloX*deltaTime;
+      fiends[i].y += fiends[i].veloY*deltaTime;
+      if(!enemies[fiends[i].target].reserve){
+        int min = 0;
+        for(int k = 0;k<sizeof(enemies)/sizeof(enemies[0]);k++){
+          if(enemies[k].reserve){
+            if(SDL_sqrt(SDL_pow((enemies[k].x-rect.x),2)+SDL_pow((enemies[k].y-rect.y),2)) <= SDL_sqrt(SDL_pow((enemies[min].x-rect.x),2)+SDL_pow((enemies[min].y-rect.y),2))){
+             min = k;
+          }
+          }
+        }
+        fiends[i].target = min;
+      }
+
+      // COLLISION 
+      for (int j = 0;j<sizeof(enemies)/sizeof(enemies[0]);j++){
+        if(enemies[i].reserve){
+          if(collisionCheck(fiends[i].x,fiends[i].y,10,10,enemies[j].x,enemies[j].y,enemies[j].width,enemies[j].height)){
+            fiends[i].reserve = 0;
+            enemies[j].health -= fiends[i].dmg;
+            Mix_PlayChannel(-1,SOUND_enemyouch,0);
+            enemies[j].knockbackMulti = 1;
+            enemies[j].knockbackX = fiends[i].veloX/2;
+            enemies[j].knockbackY = fiends[i].veloY/2;
+            rect.fiendPresent--;
+          }
+        }
+      }
+    }
+   }
+  if(rect.fiendTimer>=rect.fiendTimerMax && rect.fiendPresent < rect.fiend && !rect.dead){
+    rect.fiendTimerMax = 10/(rect.fiend+1);
+    rect.fiendTimer = 0;
+    for(int i = 0;i<sizeof(fiends)/sizeof(fiends[0]);i++){
+      if(!fiends[i].reserve){
+        fiends[i].reserve = 1;
+        fiends[i].x = rect.x;
+        fiends[i].y = rect.y;
+        fiends[i].dmg = rect.bulletDmg*2;
+        int min = 0;
+        for(int k = 0;k<sizeof(enemies)/sizeof(enemies[0]);k++){
+          if(enemies[k].reserve){
+            if(SDL_sqrt(SDL_pow((enemies[k].x-rect.x),2)+SDL_pow((enemies[k].y-rect.y),2)) <= SDL_sqrt(SDL_pow((enemies[min].x-rect.x),2)+SDL_pow((enemies[min].y-rect.y),2))){
+             min = k;
+          }
+          }
+        }
+        fiends[i].target = min;
+        break;
+      }
+    }
+    Mix_PlayChannel(-1,SOUND_fiend,0);
+    rect.fiendPresent++;
+  }
+  // SCORING SYSTEM
+  if(rect.scoreShow<rect.score){
+    rect.scoreShowF += 20*(1+SDL_log10(rect.score-rect.scoreShow+1))*deltaTime;
+    rect.scoreShow = (int)rect.scoreShowF;
+    if(rect.scoreShow>=rect.score){
+      rect.scoreShow = rect.score;
+    }
+  }
+  // COMBO SYSTEM
+  if(rect.combo>0){
+    if(!rect.comboExpired){
+      rect.comboTimer += (1+SDL_log(rect.combo/3+1))*deltaTime;
+    }
+    else {
+      rect.comboTimer -= 2*deltaTime;
+      rect.comboOpacity = ((int)(rect.comboTimer*4) % 2)*255;
+      if(rect.comboTimer < 0){
+        rect.score += 10*rect.combo*(rect.combo >= 4);
+        rect.combo = 0;
+        rect.comboTimer = 0;
+        rect.comboExpired = 0;
+        rect.comboOpacity = 0;
+
+      }
+    }
+    //printf("%f\n",rect.comboTimer);
+    if(rect.comboTimer > 5.0f){
+      rect.comboTimer = 5.0f;
+      rect.comboExpired = 1;
+    }
+  }
+  // TREE OPACITY
+  for(int i = 0;i<sizeof(trees)/sizeof(trees[0]);i++){
+    if(trees[i].reserve){
+      if(collisionCheck(trees[i].x,trees[i].y,trees[i].width,trees[i].height,rect.x,rect.y,rect.width,rect.height)){
+      trees[i].opacity -= 750*deltaTime;
+      if(trees[i].opacity < 100){
+        trees[i].opacity = 100;
+      }
+    }
+    else {
+      trees[i].opacity += 750*deltaTime;
+      if(trees[i].opacity > 255){
+        trees[i].opacity = 255;
+      }
+    }
+    }
+    
+  }
   // ENEMY BEHAVIOR 
   for(int i = 0;i<sizeof(enemies)/sizeof(enemies[0]);i++){
     if(enemies[i].reserve){
@@ -1408,18 +1776,65 @@ void update(){
          || intersectingLinesCheck(enemies[i].x+enemies[i].width/2,enemies[i].y+enemies[i].height/2,rect.x+rect.width/2,rect.y+rect.height/2,obstacles[j].x+obstacles[j].width,obstacles[j].y,obstacles[j].x+obstacles[j].width,obstacles[j].y+obstacles[j].height)
          || intersectingLinesCheck(enemies[i].x+enemies[i].width/2,enemies[i].y+enemies[i].height/2,rect.x+rect.width/2,rect.y+rect.height/2,obstacles[j].x,obstacles[j].y+obstacles[j].height,obstacles[j].x+obstacles[j].width,obstacles[j].y+obstacles[j].height)
         ){
-          vision = 0;
-          break;
+         vision = 0;      
+          break; 
         }
       } 
       
-
-      if(vision){
+      
+      if(vision || enemies[i].pathLength == -99){
+        enemies[i].pathTimer = 5.0f;
+        if(SDL_abs(enemies[i].pathLength)>=0){
+          enemies[i].pathLength = 0;
+          enemies[i].pathindex = 0;
+        }
         if((rect.x+rect.width/2-enemies[i].x-enemies[i].width/2) != 0){
         enemies[i].angle = (float)SDL_atan((rect.y+rect.height/2-enemies[i].y-enemies[i].height/2)/(rect.x+rect.width/2-enemies[i].x-enemies[i].width/2));
        if(rect.x+rect.width/2 > enemies[i].x+enemies[i].width/2){
          enemies[i].angle += PI;
        }  
+        }
+        if(enemies[i].pathLength == -99){
+          if(enemies[i].x > 0 && enemies[i].x<worldBorder.x && enemies[i].y >0  && enemies[i].y < worldBorder.y) {
+           pathFinding(enemies[i],i);
+        enemies[i].pathindex = enemies[i].pathLength;
+        }
+        }
+      }
+      else {
+        if(enemies[i].pathTimer<=enemies[i].pathLength*1.5f){
+          enemies[i].pathTimer += 1*deltaTime;
+        }
+        else{
+          enemies[i].pathLength = 0;
+          enemies[i].pathTimer = 0;
+        }
+      if(enemies[i].pathLength<=0 && enemies[i].pathTimer >= enemies[i].pathLength*1.5f){
+        if(enemies[i].x > 0 && enemies[i].x<worldBorder.x && enemies[i].y >0  && enemies[i].y < worldBorder.y) {
+        pathFinding(enemies[i],i);
+        enemies[i].pathindex = enemies[i].pathLength;
+        }
+     
+      }
+      else {
+         if((grid[enemies[i].path[enemies[i].pathindex]][0]*50+25-enemies[i].x-enemies[i].width/2) != 0){
+       enemies[i].angle = (float)SDL_atan((grid[enemies[i].path[enemies[i].pathindex]][1]*50+25-enemies[i].y-enemies[i].height/2)/(grid[enemies[i].path[enemies[i].pathindex]][0]*50+25-enemies[i].x-enemies[i].width/2));
+      if(grid[enemies[i].path[enemies[i].pathindex]][0]*50+25 > enemies[i].x+enemies[i].width/2){
+        enemies[i].angle += PI;
+      }  
+       }
+       
+       if((int)(enemies[i].x-(int)(enemies[i].x)%50) == grid[enemies[i].path[enemies[i].pathindex]][0]*50 && 
+       (int)(enemies[i].y-(int)(enemies[i].y)%50) == grid[enemies[i].path[enemies[i].pathindex]][1]*50){
+         if(enemies[i].pathindex>0){
+          enemies[i].pathindex--; 
+         }
+         else {
+           enemies[i].pathLength = 0;
+           enemies[i].pathindex = 0;
+         }
+       } 
+       }
       }
       if(enemies[i].type == 0 || (enemies[i].type == 1 && SDL_sqrt(SDL_pow((enemies[i].x-rect.x),2)+SDL_pow((enemies[i].y-rect.y),2)) > 100)){
       enemies[i].veloX = -enemies[i].speed*SDL_cos(enemies[i].angle);
@@ -1427,9 +1842,8 @@ void update(){
       enemies[i].x += (enemies[i].veloX*(1-enemies[i].knockbackMulti) + enemies[i].knockbackX*enemies[i].knockbackMulti)*deltaTime;
       enemies[i].y += (enemies[i].veloY*(1-enemies[i].knockbackMulti) + enemies[i].knockbackY*enemies[i].knockbackMulti)*deltaTime;
       }
-      }
 
-      if(enemies[i].type == 1 && enemies[i].fireRateTime > enemies[i].fireRate){
+      if(enemies[i].type == 1 && enemies[i].fireRateTime > enemies[i].fireRate && vision){
         enemies[i].fireRateTime = 0;
         for(int j = 0;j<sizeof(bullets)/sizeof(bullets[0]);j++){
           if(!bullets[j].reserve){
@@ -1456,6 +1870,32 @@ void update(){
       }
       // CHECK DEATH
       if(enemies[i].health <= 0.0f){
+        
+        // PLAYER SCORE INCREMENT 
+        rect.score += enemies[i].enragement*10+10;
+        rect.scoreOpacity = 255;
+        rect.scoreShownTime = 0;
+        if(!rect.comboExpired){
+          rect.combo++;
+        }
+        if(!rect.comboExpired){
+         rect.comboOpacity = 255;
+        rect.comboTimer = 0;
+        }
+        
+        for(int k = 0;k<sizeof(scoreTexts)/sizeof(scoreTexts[0]);k++){
+          if(!scoreTexts[k].reserve){
+            scoreTexts[k].reserve = 1;
+            scoreTexts[k].x = enemies[i].x;
+            scoreTexts[k].y = enemies[i].y;
+            scoreTexts[k].value = enemies[i].enragement*10+10;
+            scoreTexts[k].opacity = 255;
+            break;
+          }
+        }
+        //--
+       
+        enemies[i].pathLength = 0;
         int j = 0;
         for(int k = 0;k<sizeof(particles)/sizeof(particles[0]);k++){
           if(!particles[k].reserve){
@@ -1542,7 +1982,7 @@ void update(){
     }
     // COLLISION DETECTION;
        // {ENEMY}
-    for(int j = 0;j<sizeof(enemies)/sizeof(enemies[0]);j++){
+    for(int j = i;j<sizeof(enemies)/sizeof(enemies[0]);j++){
      if(collisionCheck(enemies[i].x-camera.x,enemies[i].y-camera.y,enemies[i].width,enemies[i].height,enemies[j].x-camera.x,enemies[j].y-camera.y,enemies[j].width,enemies[j].height) && i != j){
         collisionCorrection(&enemies[i].x,&enemies[i].y,&enemies[i].width,&enemies[i].height,&enemies[j].x,&enemies[j].y,&enemies[j].width,&enemies[j].height);
      }
@@ -1570,7 +2010,6 @@ void update(){
         rect.knockbackMulti = 1;
      }
   }
-
   // SPAWN ENEMIES
  if(SDL_GetTicks() - enemy_timeSpawn > enemy_spawnRate && enemy_present < enemy_max){
    enemy_timeSpawn = SDL_GetTicks();
@@ -1688,6 +2127,13 @@ void update(){
     }
   }
  }
+  // CAMERA FOLLOWAGE
+  if(rect.x+rect.width/2>=windowWidth/2 && rect.x+rect.width/2<=-windowWidth/2+worldBorder.x){
+    camera.x = rect.x+rect.width/2-windowWidth/2;  
+  }
+  if(rect.y+rect.height/2>windowHeight/2 && rect.y+rect.height/2<=-windowHeight/2+worldBorder.y){
+    camera.y = rect.y+rect.height/2-windowHeight/2; 
+  }
  // ITEMS 
  for (int i = 0;i<sizeof(items)/sizeof(items[0]);i++){
   if(items[i].reserve){
@@ -1811,7 +2257,7 @@ void update(){
       credits[i].rectPullY = -5000*SDL_sin(credits[i].angleToRect)/credits[i].distanceTorect;
     }
     else {
-      credits[i].rectPullX = 0;
+     credits[i].rectPullX = 0;
      credits[i].rectPullY = 0;
     }
     
@@ -1863,6 +2309,17 @@ void update(){
            } 
         }
  }
+ // SCORE POPUP UPDATE
+ for(int i = 0;i<sizeof(scoreTexts)/sizeof(scoreTexts[0]);i++){
+  if(scoreTexts[i].reserve){
+  scoreTexts[i].y -= 30*deltaTime;
+  scoreTexts[i].opacity -= 255*deltaTime;
+  if(scoreTexts[i].opacity<=0){
+    scoreTexts[i].reserve = 0;
+  }
+  }
+ }
+
  if(rect.dead){
   deathscreenTime += 1000*deltaTime;
   if(deathscreenTime >= 3000){
@@ -1889,6 +2346,7 @@ void setup(void){
  key.s = 0;
  key.d = 0;
  key.a = 0;
+ key.r = 0;
  key.left = 0;
  key.right = 0;
  // CAMERA INIT
@@ -1904,7 +2362,7 @@ void setup(void){
  rect.height = 20.0f;
  rect.veloX = 0.0f;
  rect.veloY = 0.0f;
- rect.speed = 200.0f;
+ rect.speed = 100.0f;
  rect.angle = 0.0f;
  rect.knockbackMulti = 0;
  rect.knockbackX = 0;
@@ -1931,6 +2389,18 @@ void setup(void){
  rect.luck = 15;
  rect.dead = 0;
  rect.stepTime = 0;
+ rect.score = 0;
+ rect.scoreShow = 0;
+ rect.scoreOpacity = 0;
+ rect.scoreShownTime = 0;
+ rect.fiend = 0;
+ rect.fiendTimer=0;
+ rect.fiendTimerMax = 2.0f;
+ rect.fiendPresent = 0;
+ rect.combo = 0;
+ rect.comboOpacity = 0;
+ rect.comboTimer = 0;
+ rect.comboExpired = 0;
  HUDOpacity = 255;
  
  // RESERVE SPACE FOR BULLETS 
@@ -1942,20 +2412,51 @@ void setup(void){
   enemies[i].reserve = 0;
   enemies[i].x = -99.0f;
   enemies[i].y = -99.0f;
+  enemies[i].pathLength = 0;
+  enemies[i].pathTimer = 5.0f;
  }
  // RESERVE SPACE FOR PARTICLES
  for(int i = 0;i<sizeof(particles)/sizeof(particles[0]);i++){
   particles[i].reserve = 0;
  }
  // RESERVE SPACE FOR OBSTACLES
- for(int i = 0;i<sizeof(obstacles)/sizeof(obstacles[0]);i++){
-  obstacles[i].reserve = 1;
-  obstacles[i].x = i*200+500;
-  obstacles[i].y = 800;
-  obstacles[i].width = 100;
-  obstacles[i].height = 100;
+  for(int i = 0;i<sizeof(obstacles)/sizeof(obstacles[0]);i++){
+  obstacles[i].reserve = 0;
+  obstacles[i].type = 0; // REGULAR BLOCK
  }
- // RESERVE SPACE FOR ITEMS
+ obstacles[0].reserve = 1;
+ obstacles[1].reserve = 1;
+ obstacles[2].reserve = 1;
+ obstacles[3].reserve = 1;
+ obstacles[4].reserve = 1;
+ obstacles[5].reserve = 1;
+
+ obstacles[0].x = 700;
+ obstacles[0].y = 800;
+ obstacles[1].x = 1000;
+ obstacles[1].y = 800;
+ obstacles[2].x = 700;
+ obstacles[2].y = 1200;
+ obstacles[3].x = 1000;
+ obstacles[3].y = 1200;
+ obstacles[4].x = 1500;
+ obstacles[4].y = 1000;
+ obstacles[5].x = 450;
+ obstacles[5].y = 800;
+
+ obstacles[0].width = 100;
+ obstacles[0].height = 100;
+ obstacles[1].width = 100;
+ obstacles[1].height = 100;
+ obstacles[2].width = 100;
+ obstacles[2].height = 100;
+ obstacles[3].width = 100;
+ obstacles[3].height = 100;
+ obstacles[4].width = 100;
+ obstacles[4].height = 100;
+ obstacles[5].width = 50;
+ obstacles[5].height = 500;
+  // RESERVE SPACE FOR ITEMS
  for(int i = 0;i<sizeof(items)/sizeof(items[0]);i++){
   items[i].reserve = 0;
  }
@@ -1973,9 +2474,55 @@ void setup(void){
    bushes[i].reserve = 1;
    bushes[i].x = (float)(rand() % (int)worldBorder.x);
    bushes[i].y = (float)(rand() % (int)worldBorder.y);
-   bushes[i].width = 20;
-   bushes[i].height = 20;
-   bushes[i].angle = rand() % 5;
+   bushes[i].width = 30;
+   bushes[i].height = 25;
+   bushes[i].opacity = 255;
+ }
+ ///--------------TREES
+ for(int i = 0;i<sizeof(trees)/sizeof(trees[0]);i++){
+  trees[i].reserve = 1;
+  trees[i].x = (float)(rand() % (int)worldBorder.x);
+  trees[i].y = (float)(rand() % (int)worldBorder.y);
+  trees[i].width = 100;
+  trees[i].height = 100;
+  trees[i].opacity = 255;
+ }
+ // POSITION CORRECTLY THE TREES
+ for(int i = 0;i<sizeof(trees)/sizeof(trees[0]);i++){
+  for(int j = 0;j<sizeof(trees)/sizeof(trees[0]);j++){
+    if(collisionCheck(trees[i].x,trees[i].y,trees[i].width,trees[i].height,trees[j].x,trees[j].y,trees[j].width,trees[j].height) && i != j){
+      collisionCorrection(&trees[i].x,&trees[i].y,&trees[i].width,&trees[i].height,&trees[j].x,&trees[j].y,&trees[j].width,&trees[j].height);
+    }
+  }
+ }
+ for(int i = 0;i<sizeof(trees)/sizeof(trees[0]);i++){
+  for(int j = 0;j<sizeof(obstacles)/sizeof(obstacles[0]);j++){
+    if(obstacles[j].reserve && collisionCheck(trees[i].x,trees[i].y,trees[i].width,trees[i].height,obstacles[j].x,obstacles[j].y,obstacles[j].width,obstacles[j].height)){
+      collisionCorrection(&trees[i].x,&trees[i].y,&trees[i].width,&trees[i].height,&obstacles[j].x,&obstacles[j].y,&obstacles[j].width,&obstacles[j].height);
+    }
+  }
+ }
+ // FINALISE
+ for(int i = 0;i<sizeof(trees)/sizeof(trees[0]);i++){
+  for(int j = 0;j<sizeof(obstacles)/sizeof(obstacles[0]);j++){
+    if(!obstacles[j].reserve){
+      trees[i].indexAssociate = j;
+      obstacles[j].x = trees[i].x+34;
+      obstacles[j].y = trees[i].y+34;
+      obstacles[j].width = 30;
+      obstacles[j].height = 30;
+      obstacles[j].type = 1; // LOG TYPE
+      obstacles[j].reserve = 1;
+      break;
+    }
+  }
+ }
+ ///------------TREES
+ for(int i = 0;i<sizeof(scoreTexts)/sizeof(scoreTexts[0]);i++){
+  scoreTexts[i].reserve = 0;
+ }
+ for(int i = 0;i<sizeof(fiends)/sizeof(fiends[0]);i++){
+  fiends[i].reserve = 0;
  }
  // SETUP UPGRADES 
  for (int i = 0;i<sizeof(upgrades)/sizeof(upgrades[0]);i++){
@@ -2042,10 +2589,20 @@ void setup(void){
    upgrades[i].UpgradeText = "Luck";
    upgrades[i].Description = "Higher chance of powerups";
   }
+  if(i == 5){
+    upgrades[i].value = rect.fiend;
+    upgrades[i].RectSrc = (SDL_Rect){
+    400,200,200,200
+   };
+   upgrades[i].alertMessage = "Added new Fiend";
+   upgrades[i].alertMessageSize = 16;
+   upgrades[i].UpgradeTextSize = sizeof("Fiend");
+   upgrades[i].DescriptionSize = sizeof("Summon a fiend");
+   upgrades[i].UpgradeText = "Fiend";
+   upgrades[i].Description = "Summon a fiend";
+   upgrades[i].price = 10;
+  }
  }
- // DEFINE OBSTACLES IN MAP
-
- 
 }
 void drawMainMenu(void){
    SDL_SetRenderDrawColor(renderer,0,20,0,255);
@@ -2533,6 +3090,16 @@ void drawUpgradeTab(void){
    upgrades[i].CurrentValue = (char*)malloc(upgrades[i].CurrentValueSize);
    SDL_strlcpy(upgrades[i].CurrentValue,TEXTCURRENT,upgrades[i].CurrentValueSize);
   }
+  if(i == 5){ // FIEND
+   upgrades[i].valueIncrement = 1;
+   rect.fiend = (int)upgrades[i].value;
+   int digits = (int)SDL_floor(SDL_log10(upgrades[i].value+1)+1);
+   char TEXTCURRENT[digits+3];
+   sprintf(TEXTCURRENT,"%d  ",(int)upgrades[i].value);
+   upgrades[i].CurrentValueSize = digits+3;
+   upgrades[i].CurrentValue = (char*)malloc(upgrades[i].CurrentValueSize);
+   SDL_strlcpy(upgrades[i].CurrentValue,TEXTCURRENT,upgrades[i].CurrentValueSize);
+  }
   }	
  
   if(!paused){
@@ -2866,13 +3433,15 @@ void fillGrids(){
   for(int i = 0;i<=worldBorder.y/rows;i++){
     for(int j = 0;j<=(worldBorder.x)/cols;j++){
       int index = j+i*(worldBorder.x/cols);
-      grid[index][0] = (float)j;// x compo
-      grid[index][1] = (float)i;// y compo
-      grid[index][2] = (float)0; // wall ?
-      grid[index][3] = (float)0; // g score
-      grid[index][4] = (float)90000; // f score
-      grid[index][5] = 0;
-      printf("%d\n",(int)grid[index][0]*50);
+      grid[index][0] = j;// x compo
+      grid[index][1] = i;// y compo
+      grid[index][2] = 0; // wall ?
+      grid[index][3] = 0; // g score
+      grid[index][4] = 90000; // h score
+      grid[index][5] = 0; // g score
+      grid[index][6]; // prev INDEX
+      grid[index][7] = 0; // closed ? 
+      
       for(int k = 0;k<sizeof(obstacles)/sizeof(obstacles[0]);k++){
         if(collisionCheck(grid[index][0]*50,grid[index][1]*50,50,50,obstacles[k].x,obstacles[k].y,obstacles[k].width,obstacles[k].height)){
           grid[index][2] = (float)1;
@@ -2882,23 +3451,16 @@ void fillGrids(){
     }
   }
 }
-void pathFinding(struct enemy ENEMY){
-    int startIndex = ENEMY.x/rows + (ENEMY.y/cols)*(worldBorder.x/cols);
-    int targetIndex = rect.x/rows + (rect.y/cols)*(worldBorder.x/cols);
 
-    int openSet[256];
-    int closedSet[256];
 
-    
-}
-// PATHFINDING - DONT CHANGE
 int main(int argc, char *argv[]){
  running = initGame();
  // START PROGRAM // 
  setup();
  fillGrids();
  while(running){
-  Mix_Volume(-1, volumeMusic/5);
+  
+  Mix_Volume(-1, volumeSFX/5);
   SDL_GetRendererOutputSize(renderer, &windowWidth, &windowHeight);
      // DELAY
      delay();
