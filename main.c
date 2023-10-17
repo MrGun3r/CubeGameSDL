@@ -14,6 +14,8 @@ int volumeSFX = 100;
 int volumeMusic = 100;
 int volumeMusicSliderDiff;
 int volumeSFXSliderDiff;
+int resolutions[5][2] = {{1920,1080},{800,600},{1024,768},{1280,720},{1280,800}};
+int resSelected = 1;
 int ShowFPS = 1;
 int ShowParticles = 1;
 int fullscreen = 0;
@@ -25,8 +27,9 @@ int fps = 0;
 int main_menu = 1;
 int paused = 0;
 int pauseBool = 0;
-int windowHeight = 800;
-int windowWidth = 1000;
+int controlPause = 0;
+int windowHeight;
+int windowWidth;
 const int strokeWidth = 2; 
 int timeShot = 0;
 float triangleAngle = 0;
@@ -99,6 +102,7 @@ Mix_Chunk* SOUND_death = NULL;
 Mix_Chunk* SOUND_step = NULL; 
 Mix_Chunk* SOUND_reload = NULL; 
 Mix_Chunk* SOUND_fiend = NULL; 
+Mix_Chunk* SOUND_empty = NULL; 
 // STORE KEY BOOLEANS (ON PRESS)
 struct keys {
   // KEYBOARD
@@ -566,13 +570,12 @@ void fillPOLYGON(int* point1,int* point2,int* point3,int* point4 ,int y,int* col
 }
 int initGame(void){
    
+   windowHeight = resolutions[resSelected][1];
+   windowWidth = resolutions[resSelected][0];
    if(SDL_Init(SDL_INIT_VIDEO) != 0){
     printf("SDL unsupported !");
     return 0;
    }
-   SDL_DisplayMode dm;
-   SDL_GetDesktopDisplayMode(0, &dm);
-   printf("%d %d",(int)dm.w,(int)dm.h);
    window = SDL_CreateWindow("Game",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,
    windowWidth,windowHeight,0
  );
@@ -622,6 +625,7 @@ int initGame(void){
    SOUND_reload = Mix_LoadWAV("sound/reload.wav");
    SOUND_step = Mix_LoadWAV("sound/step.wav");
    SOUND_fiend = Mix_LoadWAV("sound/fiend.wav");
+   SOUND_empty = Mix_LoadWAV("sound/empty.wav");
    // RANDOM NUMBER GENERATION
    
    srand(time(NULL));
@@ -1084,22 +1088,7 @@ void draw(void){
    free(EXpoint4);
   }
    }
-   // DRAW FIENDS
-   for(int i = 0;i<sizeof(fiends)/sizeof(fiends[0]);i++){
-    if(fiends[i].reserve){
-      int *point1;
-      int *point2;
-      int *point3;
-      point1 = (int*)rotatePoint(fiends[i].angle+PI/2,fiends[i].x+5,fiends[i].y,fiends[i].x+5,fiends[i].y+5);
-      point2 = (int*)rotatePoint(fiends[i].angle+PI/2,fiends[i].x,fiends[i].y+10,fiends[i].x+5,fiends[i].y+5);
-      point3 = (int*)rotatePoint(fiends[i].angle+PI/2,fiends[i].x+10,fiends[i].y+10,fiends[i].x+5,fiends[i].y+5);
-      int colorFiend[4] = {242,200,145+(int)rect.shield*1.1f,255};
-      fillPOLYGON(point1,point1,point2,point3,fiends[i].y-camera.y,colorFiend,1);
-      free(point1);
-      free(point2);
-      free(point3);
-    }
-   }
+   
 
    // DRAW BULLETS IF AVAILABLE
    for(int i = 0;i<sizeof(bullets)/sizeof(bullets[0]);i++){
@@ -1250,6 +1239,22 @@ void draw(void){
      
    }
  }
+ // DRAW FIENDS
+   for(int i = 0;i<sizeof(fiends)/sizeof(fiends[0]);i++){
+    if(fiends[i].reserve){
+      int *point1;
+      int *point2;
+      int *point3;
+      point1 = (int*)rotatePoint(fiends[i].angle+PI/2,fiends[i].x+5,fiends[i].y,fiends[i].x+5,fiends[i].y+5);
+      point2 = (int*)rotatePoint(fiends[i].angle+PI/2,fiends[i].x,fiends[i].y+10,fiends[i].x+5,fiends[i].y+5);
+      point3 = (int*)rotatePoint(fiends[i].angle+PI/2,fiends[i].x+10,fiends[i].y+10,fiends[i].x+5,fiends[i].y+5);
+      int colorFiend[4] = {242,200,145+(int)rect.shield*1.1f,255};
+      fillPOLYGON(point1,point1,point2,point3,fiends[i].y-camera.y,colorFiend,1);
+      free(point1);
+      free(point2);
+      free(point3);
+    }
+   }
  // DRAW TREES
  for(int i = 0 ;i<sizeof(trees)/sizeof(trees[0]);i++){
   if(trees[i].reserve){
@@ -1337,7 +1342,9 @@ void draw(void){
     renderNum(3,fps,windowWidth-40,0,40,20,HUDOpacity,colorWHITE);
   }
   renderNum(2,rect.mag,windowWidth-70,windowHeight-40,40,20,HUDOpacity,colorWHITE);
-  
+  if(rect.mag<=3 && !rect.reloading){
+    renderText(7,"Reload",windowWidth-75,windowHeight-55,60,10,HUDOpacity,colorWHITE);
+  }
   if(rect.reloading){
   renderText(10,TEXT_reloading,windowWidth-78,windowHeight-20,65,10,SDL_min(HUDOpacity,100),colorWHITE);
   }
@@ -1409,7 +1416,6 @@ void draw(void){
   SDL_SetRenderDrawColor(renderer,0,0,0,255);
   SDL_RenderDrawRect(renderer,&RectCombo);
   }
-  
   char TEXT_seconds[2];
   char TEXT_minutes[2];
   if(gameClock_Seconds%60 < 10){
@@ -1489,10 +1495,16 @@ void update(){
   }
  }
   // HANDLE BULLET (FIRERATE)
-  if(key.left == 1 && SDL_GetTicks() - timeShot > rect.fireRate && rect.mag > 0 && !rect.reloading && !upgradeTab){
-    shoot();
+  if(key.left == 1 && SDL_GetTicks() - timeShot > rect.fireRate && !rect.reloading && !upgradeTab){
+    if(rect.mag > 0){
+      shoot();
     rect.mag--;
     timeShot = SDL_GetTicks();
+    }
+    else if (SDL_GetTicks() - timeShot > rect.fireRate) {
+      Mix_PlayChannel(-1,SOUND_empty,0);
+      timeShot = SDL_GetTicks();
+    }
   }
 
   // RELOADING
@@ -2146,6 +2158,7 @@ void update(){
 
     // CHECK COLLISION W PLAYER
     if(collisionCheck(items[i].x,items[i].y,items[i].width,items[i].height,rect.x,rect.y,rect.width,rect.height)){
+      Mix_PlayChannel(-1,SOUND_upgrade,0);
       if(items[i].type == 0){
         // health upgrade
         rect.healthMax += 5;
@@ -2711,12 +2724,12 @@ void drawPauseMenu(void){
     windowHeight/2
   };
   SDL_RenderFillRect(renderer,&PauseBox);
-    
-    char TEXT_pause[] = "Paused";
+    if(!controlPause){
+      char TEXT_pause[] = "Paused";
     char TEXT_resume[] = "Resume";
     char TEXT_restart[] = "Restart";
     char TEXT_exit[] = "Exit";
-    char TEXT_settings[] = "Settings";
+    char TEXT_controls[] = "Controls";
   
     if(mouse.y > windowHeight/4+windowHeight/8 && mouse.y < windowHeight/4+windowHeight/8 + 30 && mouse.x > windowWidth/2-sizeof(TEXT_resume)*5 && mouse.x < windowWidth/2+sizeof(TEXT_resume)*5){
      ButtonSelectorNUM = 0;
@@ -2725,7 +2738,7 @@ void drawPauseMenu(void){
       ButtonSelectorNUM = 1;
       
     }
-    else if(mouse.y > windowHeight/4+windowHeight/8 + 60 && mouse.y < windowHeight/4+windowHeight/8 + 90  && mouse.x > windowWidth/2-sizeof(TEXT_settings)*5 && mouse.x < windowWidth/2+sizeof(TEXT_settings)*5){
+    else if(mouse.y > windowHeight/4+windowHeight/8 + 60 && mouse.y < windowHeight/4+windowHeight/8 + 90  && mouse.x > windowWidth/2-sizeof(TEXT_controls)*5 && mouse.x < windowWidth/2+sizeof(TEXT_controls)*5){
       ButtonSelectorNUM = 2;
     }
     else if(mouse.y > windowHeight/4+windowHeight/8 + 90 && mouse.y < windowHeight/4+windowHeight/8 + 120 && mouse.x > windowWidth/2-sizeof(TEXT_exit)*5 && mouse.x < windowWidth/2+sizeof(TEXT_exit)*5){
@@ -2756,8 +2769,8 @@ void drawPauseMenu(void){
   }
   if(ButtonSelectorNUM == 2){
       ButtonSelectorY = (ButtonSelectorY-(windowHeight/4+windowHeight/8 + 60))*SDL_pow(0.6,deltaTime*30)+ windowHeight/4+windowHeight/8 + 60;
-      ButtonSelectorX = (ButtonSelectorX-(windowWidth/2-sizeof(TEXT_settings)*5))*SDL_pow(0.6,deltaTime*30) + windowWidth/2-sizeof(TEXT_settings)*5;
-       ButtonSelectorSizeX = sizeof(TEXT_settings)*10;
+      ButtonSelectorX = (ButtonSelectorX-(windowWidth/2-sizeof(TEXT_controls)*5))*SDL_pow(0.6,deltaTime*30) + windowWidth/2-sizeof(TEXT_controls)*5;
+       ButtonSelectorSizeX = sizeof(TEXT_controls)*10;
   }
   if(ButtonSelectorNUM == 3){
       ButtonSelectorY = (ButtonSelectorY-(windowHeight/4+windowHeight/8 + 90))*SDL_pow(0.6,deltaTime*30)+ windowHeight/4+windowHeight/8 + 90;
@@ -2781,11 +2794,9 @@ void drawPauseMenu(void){
   renderText(sizeof(TEXT_pause),TEXT_pause,windowWidth/2-80,windowHeight/4,200,50,255,colorWHITE);
   renderText(sizeof(TEXT_resume),TEXT_resume,windowWidth/2-sizeof(TEXT_resume)*5,windowHeight/4+windowHeight/8,sizeof(TEXT_resume)*10,20,255,colorWHITE);
   renderText(sizeof(TEXT_restart),TEXT_restart,windowWidth/2-sizeof(TEXT_restart)*5,windowHeight/4+windowHeight/8+30,sizeof(TEXT_restart)*10,20,255,colorWHITE);
-  renderText(sizeof(TEXT_settings),TEXT_settings,windowWidth/2-sizeof(TEXT_settings)*5,windowHeight/4+windowHeight/8+60,sizeof(TEXT_settings)*10,20,255,colorWHITE);
+  renderText(sizeof(TEXT_controls),TEXT_controls,windowWidth/2-sizeof(TEXT_controls)*5,windowHeight/4+windowHeight/8+60,sizeof(TEXT_controls)*10,20,255,colorWHITE);
   renderText(sizeof(TEXT_exit),TEXT_exit,windowWidth/2-sizeof(TEXT_exit)*5,windowHeight/4+windowHeight/8+90,sizeof(TEXT_exit)*10,20,255,colorWHITE);
-
-  
-  // CLICK
+   // CLICK
    if(key.left == 2 && ButtonSelectorNUM != -1){
     Mix_PlayChannel(-1,SOUND_beep,0);
      if(ButtonSelectorNUM == 0){
@@ -2797,15 +2808,62 @@ void drawPauseMenu(void){
       
       setup();
      }
+     if(ButtonSelectorNUM == 2){
+      controlPause = 1;
+     }
      if(ButtonSelectorNUM == 3){
       paused = 0;
       main_menu = 1;
       setup();
      }
    }
+    }
+    else {
+      if(mouse.x>windowWidth/2-sizeof("Return")*5-20 && mouse.x<windowWidth/2-sizeof("Return")*5-10+7*13 && 
+      mouse.y>windowHeight/4+windowHeight/2-35 && mouse.y < windowHeight/4+windowHeight/2){
+        ButtonSelectorX = windowWidth/2-sizeof("Return")*5-20;
+        ButtonSelectorY = windowHeight/4+windowHeight/2-35;
+        ButtonSelectorSizeX = 7*13;
+        ButtonSelectorSizeY = 30;
+        ButtonSelectorNUM = 1;
+      }
+      else {
+        ButtonSelectorNUM = -1;
+      }
+      SDL_SetRenderDrawColor(renderer,100,100,100,(int)ButtonSelectorOpacity);
+      SDL_RenderFillRect(renderer,&(SDL_Rect){
+        ButtonSelectorX,
+        ButtonSelectorY,
+        ButtonSelectorSizeX,
+        ButtonSelectorSizeY
+      });
+      renderText(sizeof("Controls"),"Controls",windowWidth/2-85,windowHeight/4,200,45,255,colorWHITE);
+      renderText(sizeof("WASD to move"),"WASD to move",windowWidth/2-sizeof("WASD to move")*5-20,windowHeight/4+windowHeight/8,13*13,20,255,colorWHITE);
+      renderText(sizeof("Mouse Click to Shoot"),"Mouse Click to Shoot",windowWidth/2-sizeof("Mouse Click to Shoot")*5-20,windowHeight/4+windowHeight/8+30,21*13,20,255,colorWHITE);
+      renderText(sizeof("R to reload"),"R to reload",windowWidth/2-sizeof("R to reload")*5-20,windowHeight/4+windowHeight/8+60,12*13,20,255,colorWHITE);
+      renderText(sizeof("Tab to open shop"),"Tab to open shop",windowWidth/2-sizeof("Tab to open shop")*5-20,windowHeight/4+windowHeight/8+90,17*13,20,255,colorWHITE);
+      renderText(sizeof("Return"),"Return",windowWidth/2-sizeof("Return")*5-15,windowHeight/4+windowHeight/2-30,7*13,25,255,colorWHITE);
+      if(ButtonSelectorNUM == 1){
+        ButtonSelectorOpacity += 1000*deltaTime;
+        if(ButtonSelectorOpacity > 150){
+          ButtonSelectorOpacity = 150;
+        }
+      }
+      else {
+        ButtonSelectorOpacity -= 1000*deltaTime;
+        if(ButtonSelectorOpacity < 0){
+          ButtonSelectorOpacity = 0;
+        }
+      }
+      if(key.left == 2 && ButtonSelectorNUM == 1){
+        controlPause = 0;
+        Mix_PlayChannel(-1,SOUND_beep,0);
+      }
+    }
   // PAUSE KEY HANDLING 
   if(key.escape && pauseBool){
     paused = 0;
+    controlPause = 0;
   }
   if(!key.escape){
     pauseBool = 1;
@@ -3053,7 +3111,7 @@ void drawUpgradeTab(void){
   if(i == 1){ // INCREASE DAMAGE
    upgrades[i].valueIncrement = 1;
    rect.bulletDmg = (int)upgrades[i].value;
-   int digits = (int)SDL_floor(SDL_log10(upgrades[i].value+1)+1);
+   int digits = (int)SDL_floor(SDL_log10(upgrades[i].value+1*(upgrades[i].value<=0))+1);
    char TEXTCURRENT[digits+5];
    sprintf(TEXTCURRENT,"%d dmg",(int)upgrades[i].value);
    upgrades[i].CurrentValueSize = digits+5;
@@ -3063,7 +3121,7 @@ void drawUpgradeTab(void){
   if(i == 2){ // SHIELD STRENGTH
    upgrades[i].valueIncrement = -0.05f;
    rect.shieldPower = upgrades[i].value;
-   int digits = (int)SDL_floor(SDL_log10(100/upgrades[i].value+1)+1);
+   int digits = (int)SDL_floor(SDL_log10(100/upgrades[i].value+1*(upgrades[i].value<=0))+1);
    char TEXTCURRENT[digits+5];
    sprintf(TEXTCURRENT,"%d pwr",(int)SDL_floor((100/upgrades[i].value)));
    upgrades[i].CurrentValueSize = digits+5;
@@ -3073,7 +3131,7 @@ void drawUpgradeTab(void){
   if(i == 3){ // PLAYER SPEED
    upgrades[i].valueIncrement = 5;
    rect.speed = upgrades[i].value;
-   int digits = (int)SDL_floor(SDL_log10(upgrades[i].value+1)+1);
+   int digits = (int)SDL_floor(SDL_log10(upgrades[i].value+1*(upgrades[i].value<=0))+1);
    char TEXTCURRENT[digits+5];
    sprintf(TEXTCURRENT,"%d UPS",(int)upgrades[i].value);
    upgrades[i].CurrentValueSize = digits+5;
@@ -3083,7 +3141,7 @@ void drawUpgradeTab(void){
   if(i == 4){ // LUCK
    upgrades[i].valueIncrement = -1;
    rect.luck = (int)upgrades[i].value;
-   int digits = (int)SDL_floor(SDL_log10(upgrades[i].value+1)+1);
+   int digits = (int)SDL_floor(SDL_log10(upgrades[i].value+1*(upgrades[i].value<=0))+1);
    char TEXTCURRENT[digits+6];
    sprintf(TEXTCURRENT,"1 in %d",(int)upgrades[i].value);
    upgrades[i].CurrentValueSize = digits+6;
@@ -3093,7 +3151,7 @@ void drawUpgradeTab(void){
   if(i == 5){ // FIEND
    upgrades[i].valueIncrement = 1;
    rect.fiend = (int)upgrades[i].value;
-   int digits = (int)SDL_floor(SDL_log10(upgrades[i].value+1)+1);
+   int digits = (int)SDL_floor(SDL_log10(upgrades[i].value+1*(upgrades[i].value<=0))+1);
    char TEXTCURRENT[digits+3];
    sprintf(TEXTCURRENT,"%d  ",(int)upgrades[i].value);
    upgrades[i].CurrentValueSize = digits+3;
@@ -3201,7 +3259,7 @@ void drawSettings(void){
   SDL_SetRenderDrawColor(renderer,0,20,0,255);
   SDL_RenderClear(renderer);
 
-   if(mouse.x < 250){
+   if(mouse.x < 300){
      if(mouse.y > windowHeight/12+155 && mouse.y < windowHeight/12+190){
      ButtonSelectorNUM = 0;
     }
@@ -3211,19 +3269,22 @@ void drawSettings(void){
     else if(mouse.y > windowHeight/12+255 && mouse.y < windowHeight/12+290){
       ButtonSelectorNUM = 2;
     }
-    else if(mouse.y > windowHeight/12+375 && mouse.y < windowHeight/12+400){
+    else if(mouse.y > windowHeight/12+425 && mouse.y < windowHeight/12+450){
       ButtonSelectorNUM = 3;
     }
-    else if(mouse.y > windowHeight/12+425 && mouse.y < windowHeight/12+450){
+    else if(mouse.y > windowHeight/12+475 && mouse.y < windowHeight/12+500){
       ButtonSelectorNUM = 4;
     }
-    else if (mouse.y > windowHeight - 85 && mouse.y < windowHeight + 40){
-      ButtonSelectorNUM = 99;
+    else if(mouse.y > windowHeight/12+300 && mouse.y < windowHeight/12+350){
+      ButtonSelectorNUM = 5;
     }
     else {
       ButtonSelectorNUM = -1;
     }
    }
+   else if (mouse.y > windowHeight - 85 && mouse.y < windowHeight + 40 && mouse.x >windowWidth-sizeof("Back")*24-20){
+      ButtonSelectorNUM = 99;
+    }
    else {
       ButtonSelectorNUM = -1;
     }
@@ -3236,27 +3297,31 @@ void drawSettings(void){
   }
   else {
     ButtonSelectorX = 10;
-    ButtonSelectorSizeX = 250;
+    ButtonSelectorSizeX = 300;
     ButtonSelectorSizeY = 35;
   if(ButtonSelectorNUM == 0){
    ButtonSelectorY = (ButtonSelectorY-windowHeight/12 - 155)*SDL_pow(0.6,deltaTime*30) + windowHeight/12+155;
   }
-  if(ButtonSelectorNUM == 1){
+  else if(ButtonSelectorNUM == 1){
       ButtonSelectorY = (ButtonSelectorY-windowHeight/12 - 205)*SDL_pow(0.6,deltaTime*30)+ windowHeight/12+205;
   }
-  if(ButtonSelectorNUM == 2){
+  else if(ButtonSelectorNUM == 2){
       ButtonSelectorY = (ButtonSelectorY-windowHeight/12 - 255)*SDL_pow(0.6,deltaTime*30)+ windowHeight/12+255;
   }
-  if(ButtonSelectorNUM == 3){
-      ButtonSelectorY = (ButtonSelectorY-windowHeight/12 - 375)*SDL_pow(0.6,deltaTime*30)+ windowHeight/12+375;
-  }
-  if(ButtonSelectorNUM == 4){
+  else if(ButtonSelectorNUM == 3){
       ButtonSelectorY = (ButtonSelectorY-windowHeight/12 - 425)*SDL_pow(0.6,deltaTime*30)+ windowHeight/12+425;
   }
-  if(ButtonSelectorNUM == 99){
+  else if(ButtonSelectorNUM == 4){
+      ButtonSelectorY = (ButtonSelectorY-windowHeight/12 - 475)*SDL_pow(0.6,deltaTime*30)+ windowHeight/12+475;
+  }
+  else if(ButtonSelectorNUM == 5){
+      ButtonSelectorY = (ButtonSelectorY-windowHeight/12 - 300)*SDL_pow(0.6,deltaTime*30)+ windowHeight/12+300;
+  }
+  else if(ButtonSelectorNUM == 99){
     ButtonSelectorSizeX = 150;
     ButtonSelectorSizeY = 70;
     ButtonSelectorY = (ButtonSelectorY-windowHeight + 85)*SDL_pow(0.6,deltaTime*30)+ windowHeight - 85;
+    ButtonSelectorX = windowWidth-sizeof("Back")*24-20;
   }
   ButtonSelectorOpacity += 1000*deltaTime;
   if(ButtonSelectorOpacity>200){
@@ -3290,7 +3355,7 @@ void drawSettings(void){
       SDL_RenderFillRect(renderer,&buttonOnOff);
       renderText(11,"Fullscreen",buttonOnOff.x+30,buttonOnOff.y,11*13,20,255,colorWHITE);
     }
-    if(i == 1){ // SOUND
+    else if(i == 1){ // SOUND
       if(ShowFPS){
         SDL_SetRenderDrawColor(renderer,0,150,0,255);
       }
@@ -3300,7 +3365,7 @@ void drawSettings(void){
       SDL_RenderFillRect(renderer,&buttonOnOff);
       renderText(9,"Show FPS",buttonOnOff.x+30,buttonOnOff.y,9*13,20,255,colorWHITE);
     }
-    if(i == 2){ // PARTICLES
+    else if(i == 2){ // PARTICLES
       if(ShowParticles){
         SDL_SetRenderDrawColor(renderer,0,150,0,255);
       }
@@ -3311,11 +3376,18 @@ void drawSettings(void){
       renderText(15,"Show Particles",buttonOnOff.x+30,buttonOnOff.y,15*13,20,255,colorWHITE);
     }
   }
+  // SCREEN RES
+  renderText(11,"Resolution",30,windowHeight/12+310,11*13,20,255,colorWHITE);
+  char TEXT_Resolution[9];
+  sprintf(TEXT_Resolution,"%dx%d",resolutions[resSelected][0],resolutions[resSelected][1]);
+  renderText(11,"Resolution",30,windowHeight/12+310,11*13,20,255,colorWHITE);
+  renderText(9,TEXT_Resolution,30 + 12*13,windowHeight/12+310,9*13,20,255,colorWHITE);
+
   // AUDIO
-  renderText(sizeof("Audio"),"Audio",30,windowHeight/12+310,sizeof("Audio")*20,40,255,colorWHITE);
+  renderText(sizeof("Audio"),"Audio",30,windowHeight/12+360,sizeof("Audio")*20,40,255,colorWHITE);
   for(int i = 0 ;i<2;i++){
      SDL_Rect sliderRect = {
-    120,windowHeight/12+385+i*50,
+    120,windowHeight/12+435+i*50,
     100,10
     };
     SDL_SetRenderDrawColor(renderer,100,100,100,100);
@@ -3323,7 +3395,7 @@ void drawSettings(void){
    if(i == 0){ // MUSIC
     renderText(5,"Music",40,sliderRect.y-5,5*13,20,255,colorWHITE);
     SDL_Rect KnobMusic = {
-    115+volumeMusic+volumeMusicSliderDiff,windowHeight/12+385,
+    115+volumeMusic+volumeMusicSliderDiff,windowHeight/12+435,
     10,10
     };
     SDL_SetRenderDrawColor(renderer,255,255,255,255);
@@ -3331,7 +3403,7 @@ void drawSettings(void){
    }
    if(i == 1){ // SFX
    SDL_Rect KnobSFX = {
-    115+volumeSFX+volumeSFXSliderDiff,windowHeight/12+435,
+    115+volumeSFX+volumeSFXSliderDiff,windowHeight/12+485,
     10,10
     };
     SDL_SetRenderDrawColor(renderer,255,255,255,255);
@@ -3353,10 +3425,10 @@ void drawSettings(void){
         cubeSpinningOpacity = 255;
       }
     }
-    int* pt1 = rotatePoint(cubeSpinningAngle,15,windowHeight/12+385+(ButtonSelectorNUM-3)*50,20,windowHeight/12+390+(ButtonSelectorNUM-3)*50);
-    int* pt2 = rotatePoint(cubeSpinningAngle,25,windowHeight/12+385+(ButtonSelectorNUM-3)*50,20,windowHeight/12+390+(ButtonSelectorNUM-3)*50);
-    int* pt3 = rotatePoint(cubeSpinningAngle,25,windowHeight/12+395+(ButtonSelectorNUM-3)*50,20,windowHeight/12+390+(ButtonSelectorNUM-3)*50);
-    int* pt4 = rotatePoint(cubeSpinningAngle,15,windowHeight/12+395+(ButtonSelectorNUM-3)*50,20,windowHeight/12+390+(ButtonSelectorNUM-3)*50);
+    int* pt1 = rotatePoint(cubeSpinningAngle,15,windowHeight/12+435+(ButtonSelectorNUM-3)*50,20,windowHeight/12+440+(ButtonSelectorNUM-3)*50);
+    int* pt2 = rotatePoint(cubeSpinningAngle,25,windowHeight/12+435+(ButtonSelectorNUM-3)*50,20,windowHeight/12+440+(ButtonSelectorNUM-3)*50);
+    int* pt3 = rotatePoint(cubeSpinningAngle,25,windowHeight/12+445+(ButtonSelectorNUM-3)*50,20,windowHeight/12+440+(ButtonSelectorNUM-3)*50);
+    int* pt4 = rotatePoint(cubeSpinningAngle,15,windowHeight/12+445+(ButtonSelectorNUM-3)*50,20,windowHeight/12+440+(ButtonSelectorNUM-3)*50);
     int colorWhite[4] = {255,255,255,cubeSpinningOpacity};
     fillPOLYGON(pt1,pt2,pt3,pt4,windowHeight/12+385,colorWhite,0);
   }
@@ -3367,24 +3439,25 @@ void drawSettings(void){
     }
   }
   }
-  
-  
-  renderText(sizeof("Back"),"Back",20,windowHeight - 80,sizeof("Back")*24,50,255,colorWHITE);
+  renderText(sizeof("Back"),"Back",windowWidth-sizeof("Back")*24-10,windowHeight - 80,sizeof("Back")*24,50,255,colorWHITE);
   if(key.left == 2 && ButtonSelectorNUM != -1){
     Mix_PlayChannel(-1,SOUND_beep,0);
      if(ButtonSelectorNUM == 99){
       settings = 0;
       ButtonSelectorOpacity = 0;
-     }
-     if(ButtonSelectorNUM == 0){
-      fullscreen = !fullscreen;
       if(fullscreen){
         SDL_SetWindowFullscreen(window,SDL_WINDOW_FULLSCREEN);
       }
       else {
         SDL_SetWindowFullscreen(window,0);
       }
-      
+      windowHeight = resolutions[resSelected][1];
+      windowWidth = resolutions[resSelected][0]; 
+      SDL_SetWindowSize(window,windowWidth,windowHeight);
+      SDL_SetWindowPosition(window,SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED);
+     }
+     if(ButtonSelectorNUM == 0){
+      fullscreen = !fullscreen;      
      }
      if(ButtonSelectorNUM == 1){
       ShowFPS = !ShowFPS;
@@ -3396,6 +3469,12 @@ void drawSettings(void){
      volumeSFX += volumeSFXSliderDiff;
      volumeMusicSliderDiff = 0;
      volumeSFXSliderDiff = 0;
+     if(ButtonSelectorNUM == 5){
+      resSelected++;
+      if(resSelected >= 5){
+        resSelected = 0;
+      }
+     }
    }
    if(key.left == 1){
      if(ButtonSelectorNUM == 3){
