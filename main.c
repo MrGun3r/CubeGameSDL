@@ -3085,7 +3085,6 @@ void drawUpgradeTab(void){
           upgrades[i].buttonHover = 0;
         }
       }
-      free(upgrades[i].alertMessage);
   }  
 
 
